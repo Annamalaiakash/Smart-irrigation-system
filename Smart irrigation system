@@ -1,0 +1,139 @@
+#define BLYNK_TEMPLATE_ID "Template id"
+#define BLYNK_TEMPLATE_NAME "Template name"
+#define BLYNK_AUTH_TOKEN "Auth token"
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <DHT.h>
+
+char ssid[] = "wifi name";
+char pass[] = "Password";
+
+#define DHTPIN 4
+#define DHTTYPE DHT11
+
+#define SOIL_PIN 34
+#define WATER_PIN 35
+#define RELAY_PIN 5
+
+DHT dht(DHTPIN, DHTTYPE);
+BlynkTimer timer;
+
+// Sensor values
+int soilValue;
+int waterValue;
+float temperature;
+float humidity;
+
+// Control flags
+bool manualOFF = false;
+bool relayState = false;
+
+// -------- WATER SENSOR --------
+int readWaterSensor()
+{
+  int total = 0;
+  for (int i = 0; i < 5; i++)
+  {
+    total += analogRead(WATER_PIN);
+  }
+  return total / 5;
+}
+
+// -------- RELAY CONTROL (INPUT LOGIC) --------
+void relayON()
+{
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW);   // ON (active LOW)
+  relayState = true;
+}
+
+void relayOFF()
+{
+  pinMode(RELAY_PIN, INPUT);      // OFF (floating)
+  relayState = false;
+}
+
+// -------- MAIN LOGIC --------
+void readSensors()
+{
+  soilValue = analogRead(SOIL_PIN);
+  waterValue = readWaterSensor();
+
+  temperature = dht.readTemperature();
+  humidity = dht.readHumidity();
+
+  Serial.print("Soil: "); Serial.println(soilValue);
+  Serial.print("Water: "); Serial.println(waterValue);
+
+  int soilDisplay = 4095 - soilValue;
+
+  Blynk.virtualWrite(V2, soilDisplay);
+  Blynk.virtualWrite(V3, temperature);
+  Blynk.virtualWrite(V4, humidity);
+  Blynk.virtualWrite(V5, waterValue);
+
+  // 🔴 Manual OFF (priority)
+  if (manualOFF)
+  {
+    relayOFF();
+    return;
+  }
+
+  // 🔴 Water LOW → OFF
+  if (waterValue < 1000)
+  {
+    Serial.println("Water LOW → OFF");
+    relayOFF();
+    return;
+  }
+
+  // 🟢 Soil DRY → ON
+  if (soilValue > 3000)   // adjust if needed
+  {
+    Serial.println("Soil DRY → ON");
+    relayON();
+  }
+  else
+  {
+    Serial.println("Soil WET → OFF");
+    relayOFF();
+  }
+}
+
+// -------- MANUAL CONTROL --------
+BLYNK_WRITE(V1)
+{
+  int value = param.asInt();
+
+  if (value == 0)
+  {
+    manualOFF = true;
+    relayOFF();
+  }
+  else
+  {
+    manualOFF = false;
+  }
+}
+
+// -------- SETUP --------
+void setup()
+{
+  Serial.begin(115200);
+
+  relayOFF();  // start OFF (INPUT mode)
+
+  dht.begin();
+
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  timer.setInterval(1000L, readSensors);
+}
+
+// -------- LOOP --------
+void loop()
+{
+  Blynk.run();
+  timer.run();
+}
